@@ -157,11 +157,8 @@ for iter = 0:max_iter-1
     op2 = trace_obj.(U₁.(-tls), U₂.(-tls), U₃.(-tls) ) # Follow the unitary manifold (for plotting)
 
     # line search (algorithm doesn't make any difference)
-    if iter < 2
-        result = optimize(ofunc3, -tmax1, tmax1, Brent()) # start at t=0
-    else
-        result = optimize(ofunc3, -tmax1, tmax1, GoldenSection())
-    end
+    result = optimize(ofunc3, -tmax1, tmax1, GoldenSection())
+
     t_min = Optim.minimizer(result)
     o_min = Optim.minimum(result)
     obj_hist[iter+1] = o_min
@@ -204,7 +201,7 @@ for iter = 0:max_iter-1
         H₃ = N₃
     end
 
-    # save new descent direction
+    # save steepest descent direction for next iteration
     S₁ = N₁
     S₂ = N₂
     S₃ = N₃
