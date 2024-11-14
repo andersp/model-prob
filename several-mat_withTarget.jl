@@ -35,11 +35,6 @@ function init_intermediate_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}}, Vvec
         end
     else
         for q=1:nlen
-            # Wvec[q] = Matrix(I,d,d)
-
-            # H0 = rand(ComplexF64,d,d)
-            # Wvec[q] = exp(-im*0.5*(H0 + H0'))
-
             # Exact propagator
             S = Vvec[q]*S
 
@@ -130,7 +125,7 @@ function unitary_retraction!(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, Hvec:
     end
 end
 
-function euclidean_retraction!(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}})
+function euclidean_extrapolation!(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}})
     # evaluate the retraction at parameter 't'
     nTerms = length(Wvec)
     for q=1:nTerms
@@ -245,7 +240,7 @@ function runCG(Nterms, tmax1, frobenius=true)
     global γ = 0.0
     Hvec[:] = Svec[:]
 
-    # Initial objective funciton value
+    # Initial objective function value
     # Define line search objective function with fixed direction
     if frobenius
         to_init = frob_obj_line(0.0, Wvec, Hvec, Vvec, Uvec, Vtg)
@@ -258,7 +253,7 @@ function runCG(Nterms, tmax1, frobenius=true)
 
     max_iter = 500
     global obj_hist = zeros(max_iter)
-    global Gkk_hist = zeros(max_iter)
+    global Gkk_hist = zeros(max_iter+1)
     global residuals = zeros(Nterms, max_iter)
     global Niter = 0
 
@@ -289,7 +284,7 @@ function runCG(Nterms, tmax1, frobenius=true)
 
         # next W:
         if frobenius
-            euclidean_retraction!(-t_min, Wvec, Hvec, Uvec)
+            euclidean_extrapolation!(-t_min, Wvec, Hvec, Uvec)
         else
             unitary_retraction!(-t_min, Wvec, Hvec, Uvec)
         end
@@ -304,7 +299,7 @@ function runCG(Nterms, tmax1, frobenius=true)
             residuals[:, iter+1]  = eval_trace_per_window(Wvec, Vvec)
             eval_Euclidean_grad!(Wvec, Vvec, Vtg, Gvec)
 
-            # skew-Hermitian matrices from the Euclidian gradient
+            # form the skew-Hermitian matrices from the Euclidian gradients
             for q=1:Nterms
                 Nvec[q] = skew(Gvec[q]*Wvec[q]')
             end
@@ -329,11 +324,11 @@ function runCG(Nterms, tmax1, frobenius=true)
     unitary_err = 0.0
     Id = Matrix(I,d,d)
     for q=1:Nterms
-        unitary_err += norm(Id - Wvec[q]'Wvec[q])
+        unitary_err += norm(Id - Wvec[q]'*Wvec[q])
     end
     unitary_err /= Nterms
 
-    return obj_hist[1:Niter], Gkk_hist[1:Niter], residuals[:,1:Niter], unitary_err
+    return obj_hist[1:Niter], Gkk_hist[1:Niter+1], residuals[:,1:Niter], unitary_err # Gkk_hist has Niter+1 elements
 end # of function runCG
 
 
@@ -343,7 +338,8 @@ end # of function runCG
 
 # Number of windows in the objective
 # Nterms_all = [2,3,4,5,6]
-Nterms_all = [2,4,8, 16, 32]
+Nterms_all = [2, 4, 8, 16, 32]
+# Nterms_all = [4]
 
 # Maximum linesearch stepsize
 # TUNING! Too large or too small will slow convergence or end in local minimum...
@@ -352,7 +348,7 @@ tmax1_all = Nterms_all .+1
 # tmax1_all = 2.5*ones(length(Nterms_all))
 
 # Switch between trace riemann CG (false) and frobenius (true)
-frob = true 
+frob = true
 
 # Run CG for each number of windows
 objhist = []
@@ -367,9 +363,16 @@ for i=1:length(Nterms_all)
     push!(unitary_err, uerr)
 end
 
+# title string for the plots
+if frob
+    tstr = "Frobenius norm & Euclidean grads"
+else
+    tstr = "Trace infidelity & Riemannian grads"
+end
+
 # Plot convergence for each number of windows
 i=1
-pl_objhist = plot(objhist[i], yaxis=:log10, ylims=(1e-10,1e1), xlabel="Iteration", ylabel="Objective", label="Nterms="*string(Nterms_all[i]))
+pl_objhist = plot(objhist[i], yaxis=:log10, ylims=(1e-10,1e1), xlabel="Iteration", ylabel="Objective", label="Nterms="*string(Nterms_all[i]), title=tstr)
 for i=2:length(objhist)
     global pl_objhist = plot!(objhist[i], yaxis=:log10, ylims=(1e-10,1e1), xlabel="Iteration", ylabel="Objective", label="Nterms="*string(Nterms_all[i]))
 end
@@ -377,7 +380,7 @@ println("\n All convergence histories plotted in 'pl_objhist'.")
 
 # Plot convergence for each number of windows (Gkk)
 i=1
-pl_gkkhist = plot(gkkhist[i], yaxis=:log10, ylims=(1e-10,1e1),  xlabel="Iteration", ylabel="Gkk", label="Nterms="*string(Nterms_all[i]))
+pl_gkkhist = plot(gkkhist[i], yaxis=:log10, ylims=(1e-10,1e1),  xlabel="Iteration", ylabel="Gkk", label="Nterms="*string(Nterms_all[i]), title=tstr)
 for i=2:length(gkkhist)
     global pl_gkkhist = plot!(gkkhist[i], yaxis=:log10, ylims=(1e-10,1e1),  xlabel="Iteration", ylabel="Gkk", label="Nterms="*string(Nterms_all[i]))
 end
@@ -386,5 +389,5 @@ println("\n All gradient histories plotted in 'pl_gkkhist'.")
 
 # For the largest number of Nterms, plot the residuals per window, for the first few iterations iteration
 plotniters = min(Niter, 50)
-pl_residual = plot(resids[end][:,1:5:plotniters], yscale=:log10, legend=true, xlabel="window", ylabel="residual")
-println(" Residuals per window for Nterms=", Nterms_all[end], " plotted in 'pl_residual'.")
+pl_residual = plot(resids[end][:,1:5:plotniters], yscale=:log10, legend=true, xlabel="window", ylabel="residual", title=tstr)
+println("\n Residuals per window for Nterms=", Nterms_all[end], " plotted in 'pl_residual'.")
