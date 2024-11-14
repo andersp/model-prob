@@ -35,10 +35,34 @@ function init_Vtarget(d::Int64, Vvec::Vector{Matrix{ComplexF64}})
     return Vlast, Vtar
 end
 
-function init_identity_unitary_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}})
+function init_identity_unitary_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, frobenius)
     nlen = length(Wvec)
-    for q=1:nlen
-        Wvec[q] = Matrix(I,d,d)
+   
+    S = Matrix(I, d,d)
+    amp = 1e-1
+
+    if frobenius
+        for q=1:nlen
+            S = Vvec[q]*S
+            Wvec[q] = S + rand(ComplexF64,d,d) * amp
+        end
+    else
+        for q=1:nlen
+            # Wvec[q] = Matrix(I,d,d)
+
+            # H0 = rand(ComplexF64,d,d)
+            # Wvec[q] = exp(-im*0.5*(H0 + H0'))
+
+            # Exact propagator
+            S = Vvec[q]*S
+
+            # Perturbed initial condition
+            H = im * log(S)
+            Hperturb = rand(ComplexF64,d,d) * amp
+            H += 0.5*(Hperturb + Hperturb')
+            Wvec[q] = exp(-im*H)
+
+        end
     end
 end
 
@@ -67,6 +91,43 @@ function eval_trace_obj(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{Co
     return G
 end
 
+function eval_frob_per_window(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}})
+    nlen = length(Zvec)
+    d = size(Zvec[1],1)
+
+    G = zeros(nlen)
+    G[1] = norm(Zvec[1]-Vvec[1])^2
+    for q=2:nlen
+        G[q] = norm(Zvec[q] - Vvec[q]*Zvec[q-1])^2
+    end
+    return G
+end
+
+
+function eval_frob_obj(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, Vtar::Matrix{ComplexF64}, Vlast::Matrix{ComplexF64})
+    # evaluate a sum of trace infidelities
+    nlen = length(Zvec)
+    d = size(Zvec[1],1)
+
+    # Intermediate window residuals 
+    G = sum(eval_frob_per_window(Zvec, Vvec)) / nlen
+    # Final time target residual
+    G += norm(Zvec[nlen])^2 - abs(tr(Vtar'*Vlast*Zvec[nlen]))^2/d
+    return G
+end
+
+
+function frob_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Vtar::Matrix{ComplexF64}, Vlast::Matrix{ComplexF64})
+    nTerms = length(Wvec) 
+    for q=1:nTerms
+        # Uvec[q] = exp(t * Hvec[q]) * Wvec[q] 
+        Uvec[q] = Wvec[q] + t*Hvec[q]
+    end
+    return eval_frob_obj(Uvec, Vvec, Vtar, Vlast)
+end
+
+
+
 function trace_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Vtar::Matrix{ComplexF64}, Vlast::Matrix{ComplexF64})
     nTerms = length(Wvec) 
     for q=1:nTerms
@@ -82,6 +143,34 @@ function unitary_retraction!(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, Hvec:
         Uvec[q] = exp(t * Hvec[q]) * Wvec[q] 
     end
 end
+
+function euclidean_retraction!(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}})
+    # evaluate the retraction at parameter 't'
+    nTerms = length(Wvec)
+    for q=1:nTerms
+        Uvec[q] = Wvec[q] + t * Hvec[q]
+    end
+end
+
+
+function eval_Euclidean_frob_grad!(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, Vtar::Matrix{ComplexF64}, Vlast::Matrix{ComplexF64}, Gvec::Vector{Matrix{ComplexF64}})
+    # in-place results in Gvec
+    Nterms = length(Zvec)
+    d = size(Zvec[1],1)
+
+    Gvec[1] = 2*(Zvec[1] - Vvec[1]) / Nterms
+
+    for q=2:Nterms
+        Gvec[q-1] += 2*(Zvec[q-1] - Vvec[q]'*Zvec[q] ) / Nterms # contributions to the previous gradient from Zvec[q]
+        Gvec[q] = 2*(Zvec[q] - Vvec[q]*Zvec[q-1]) / Nterms
+    end
+
+    Gvec[Nterms] += 2*Zvec[Nterms] - 2*(Vlast'*Vtar*tr(Vtar'*Vlast*Zvec[Nterms])/d)
+
+    Gvec[:] = Gvec
+end
+
+
 
 function eval_Euclidean_grad!(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, Vtar::Matrix{ComplexF64}, Vlast::Matrix{ComplexF64}, Gvec::Vector{Matrix{ComplexF64}})
     # in-place results in Gvec
@@ -115,7 +204,7 @@ d = 2^q # dimension of matrices (d x d)
 Id = Matrix(I,d,d)
 
 # Optimize with CG for given number of windows (Nterms) and maximum linesearch 'tmax'
-function runCG(Nterms, tmax1)
+function runCG(Nterms, tmax1, frobenius=true)
     # set the seed in the random number generator
     Random.seed!(1234)
 
@@ -133,27 +222,50 @@ function runCG(Nterms, tmax1)
     # Set the tinal-time target unitary and solution operator. Vtar = Vlast*prod_q Vvec[q]
     Vlast, Vtar = init_Vtarget(d, Vvec)
 
-    # Initial guess: identity matrices
-    init_identity_unitary_mat!(d, Wvec)
+    # Initial guess: identity matrices. Small random perturbation from exact propagator
+    init_identity_unitary_mat!(d, Wvec, Vvec, frobenius)
 
     # Euclidean gradient
-    eval_Euclidean_grad!(Wvec, Vvec, Vtar, Vlast, Gvec)
+    if frobenius
+        eval_Euclidean_frob_grad!(Wvec, Vvec, Vtar, Vlast, Gvec)
 
-    # skew-Hermitian matrices from the Euclidian gradient
-    for q=1:Nterms
-        Svec[q] = skew(Gvec[q]*Wvec[q]')
+        Svec[:] = Gvec[:]
+    else
+        eval_Euclidean_grad!(Wvec, Vvec, Vtar, Vlast, Gvec)
+
+        # skew-Hermitian matrices from the Euclidian gradient
+        for q=1:Nterms
+            Svec[q] = skew(Gvec[q]*Wvec[q]')
+        end
     end
+
+    # ## Finite difference test
+    # EPS = 1e-5
+    # for q=1:Nterms
+    #     Hvec[q] = rand(ComplexF64, d,d)
+    # end
+    # obj0 = frob_obj_line(-EPS, Wvec, Hvec, Vvec, Uvec, Vtar, Vlast)
+    # obj1 = frob_obj_line(EPS, Wvec, Hvec, Vvec, Uvec, Vtar, Vlast)
+    # fd_obj = (obj1-obj0) /(2*EPS)
+    # dir_obj = inner_prod(Gvec, Hvec)
+    # println("FD = ", fd_obj, " grad = ", dir_obj)
+    # println("rel. error = ", abs(dir_obj - fd_obj)/abs(dir_obj))
+    # stop
 
     # The initial search direction equals S
     global γ = 0.0
     Hvec[:] = Svec[:]
 
     # Initial objective funciton value
-    to_init = trace_obj_line(0.0, Wvec, Hvec, Vvec, Uvec, Vtar, Vlast)
-    println("initial guess, objective (G) = ", to_init, " t=0.0")
-
     # Define line search objective function with fixed direction
-    ofunc3(t) =  trace_obj_line(-t, Wvec, Hvec, Vvec, Uvec, Vtar, Vlast) 
+    if frobenius
+        to_init = frob_obj_line(0.0, Wvec, Hvec, Vvec, Uvec, Vtar, Vlast)
+        ofunc3_f(t) =  frob_obj_line(-t, Wvec, Hvec, Vvec, Uvec, Vtar, Vlast) 
+    else
+        to_init = trace_obj_line(0.0, Wvec, Hvec, Vvec, Uvec, Vtar, Vlast)
+        ofunc3(t) =  trace_obj_line(-t, Wvec, Hvec, Vvec, Uvec, Vtar, Vlast) 
+    end
+    println("initial guess, objective (G) = ", to_init, " t=0.0")
 
     max_iter = 500
     global obj_hist = zeros(max_iter)
@@ -174,25 +286,39 @@ function runCG(Nterms, tmax1)
         end
 
         # line search
-        result = optimize(ofunc3, -tmax1, tmax1, GoldenSection())
+        if frobenius
+            result = optimize(ofunc3_f, -tmax1, tmax1, GoldenSection())
+        else
+            result = optimize(ofunc3, -tmax1, tmax1, GoldenSection())
+        end
 
         t_min = Optim.minimizer(result)
         o_min = Optim.minimum(result)
-        obj_hist[iter+1] = o_min
+        obj_hist[iter+1] = abs(o_min)
 
         println("iter = ", iter, " Gkk = ", Gkk, " γ = ", γ, ", minimum (G) = ", o_min, " minimizer (t): ", t_min)
 
         # next W:
-        unitary_retraction!(-t_min, Wvec, Hvec, Uvec)
+        if frobenius
+            euclidean_retraction!(-t_min, Wvec, Hvec, Uvec)
+        else
+            unitary_retraction!(-t_min, Wvec, Hvec, Uvec)
+        end
         Wvec[:] = Uvec[:]
 
-        # Store residuals per window
-        residuals[:, iter+1]  = eval_trace_per_window(Wvec, Vvec)
+        # Store residuals per window and eval new gradient
+        if frobenius
+            residuals[:, iter+1]  = eval_frob_per_window(Wvec, Vvec)
+            eval_Euclidean_frob_grad!(Wvec, Vvec, Vtar, Vlast, Gvec)
+            Nvec[:] = Gvec[:]
+        else
+            residuals[:, iter+1]  = eval_trace_per_window(Wvec, Vvec)
+            eval_Euclidean_grad!(Wvec, Vvec, Vtar, Vlast, Gvec)
 
-        eval_Euclidean_grad!(Wvec, Vvec, Vtar, Vlast, Gvec)
-        # skew-Hermitian matrices from the Euclidian gradient
-        for q=1:Nterms
-            Nvec[q] = skew(Gvec[q]*Wvec[q]')
+            # skew-Hermitian matrices from the Euclidian gradient
+            for q=1:Nterms
+                Nvec[q] = skew(Gvec[q]*Wvec[q]')
+            end
         end
 
         Uvec[:] = Nvec[:] - Svec[:]
@@ -211,7 +337,14 @@ function runCG(Nterms, tmax1)
         Svec[:] = Nvec[:]
     end
 
-    return obj_hist[1:Niter], Gkk_hist[1:Niter], residuals[:,1:Niter]
+    unitary_err = 0.0
+    Id = Matrix(I,d,d)
+    for q=1:Nterms
+        unitary_err += norm(Id - Wvec[q]'Wvec[q])
+    end
+    unitary_err /= Nterms
+
+    return obj_hist[1:Niter], Gkk_hist[1:Niter], residuals[:,1:Niter], unitary_err
 end # of function runCG
 
 
@@ -229,15 +362,20 @@ tmax1_all = Nterms_all .+1
 # tmax1_all = Nterms_all    
 # tmax1_all = 2.5*ones(length(Nterms_all))
 
+# Switch between trace riemann CG (false) and frobenius (true)
+frob = true 
+
 # Run CG for each number of windows
 objhist = []
 gkkhist = []
 resids = []
+unitary_err = []
 for i=1:length(Nterms_all)
-    obj, gkk, res = runCG(Nterms_all[i], tmax1_all[i])
+    obj, gkk, res, uerr = runCG(Nterms_all[i], tmax1_all[i], frob)
     push!(objhist, obj)
     push!(gkkhist, gkk)
     push!(resids, res)
+    push!(unitary_err, uerr)
 end
 
 # Plot convergence for each number of windows
@@ -259,5 +397,5 @@ println("\n All gradient histories plotted in 'pl_gkkhist'.")
 
 # For the largest number of Nterms, plot the residuals per window, for the first few iterations iteration
 plotniters = min(Niter, 50)
-pl_residual = plot(resids[end][:,1:plotniters], yscale=:log10, legend=false, xlabel="window", ylabel="residual")
+pl_residual = plot(resids[end][:,1:5:plotniters], yscale=:log10, legend=true, xlabel="window", ylabel="residual")
 println(" Residuals per window for Nterms=", Nterms_all[end], " plotted in 'pl_residual'.")
