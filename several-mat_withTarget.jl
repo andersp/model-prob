@@ -73,7 +73,7 @@ function eval_trace_per_window(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Ma
 end
 
 
-function eval_trace_obj!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Vvec::Vector{Matrix{ComplexF64}}, )
+function eval_trace_obj!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Vvec::Vector{Matrix{ComplexF64}})
     # evaluate a sum of trace infidelities
     nlen = length(Zvec)
     d = size(Zvec[1],1)
@@ -114,24 +114,24 @@ function eval_frob_obj!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}
     return G
 end
 
-
-function frob_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64})
+function frob_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Halpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Ualpha::Vector{Float64}, Vtg::Matrix{ComplexF64})
     nTerms = length(Wvec) 
     for q=1:nTerms
         # Uvec[q] = exp(t * Hvec[q]) * Wvec[q] 
         Uvec[q] = Wvec[q] + t*Hvec[q]
     end
-    return eval_frob_obj!(Uvec, alpha, Vvec_Ham, Vtg, Vvec)
+    Ualpha[:] = alpha[:] .+ t*Halpha[:]
+    return eval_frob_obj!(Uvec, Ualpha, Vvec_Ham, Vtg, Vvec)
 end
 
-
-
-function trace_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64})
+function trace_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Halpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Ualpha::Vector{Float64}, Vtg::Matrix{ComplexF64})
     nTerms = length(Wvec) 
     for q=1:nTerms
         Uvec[q] = exp(t * Hvec[q]) * Wvec[q] 
+        # Uvec[q] = Wvec[q] + t*Hvec[q] 
     end
-    return eval_trace_obj!(Uvec, alpha, Vvec_Ham, Vtg, Vvec)
+    Ualpha[:] = alpha[:] .+ t*Halpha[:]
+    return eval_trace_obj!(Uvec, Ualpha, Vvec_Ham, Vtg, Vvec)
 end
 
 function unitary_retraction!(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}})
@@ -228,10 +228,10 @@ d = 2^q # dimension of matrices (d x d)
 Id = Matrix(I,d,d)
 
 # Optimize with CG for given number of windows (Nterms) and maximum linesearch 'tmax'
-# function runCG(Nterms, tmax1, frobenius=true)
-Nterms = 4
-tmax1 = 2
-frobenius = true
+function runCG(Nterms, tmax1, frobenius=true)
+# Nterms = 4
+# tmax1 = 2
+# frobenius = true
 
     # set the seed in the random number generator
     Random.seed!(1234)
@@ -246,6 +246,10 @@ frobenius = true
     Uvec = Vector{Matrix{ComplexF64}}(undef,Nterms)   # workspace
     alpha = zeros(Float64,Nterms+1)                 # control parameters
     Galpha = zeros(Float64,Nterms+1)                # Gradient of controls
+    Salpha = zeros(Float64,Nterms+1)                # 
+    Nalpha = zeros(Float64,Nterms+1)                # 
+    Halpha = zeros(Float64,Nterms+1)                # 
+    Ualpha = zeros(Float64,Nterms+1)                # 
 
     # General optimal controls, solution operators and final target
     Vtg = generate_solution!(d, Vvec, Vvec_Ham, alpha)
@@ -256,7 +260,9 @@ frobenius = true
     init_intermediate_mat!(d, Wvec, Vvec, frobenius)
 
     # Initial guess for the control parameters
-    alpha[:] = rand(Nterms+1)
+    amp = 0.1
+    alpha[:] = alpha_opt + amp*rand(Nterms+1)
+    # alpha[:] = rand(Nterms+1)
 
     if frobenius
         G0 = eval_frob_obj!(Wvec, alpha, Vvec_Ham, Vtg, Vvec)
@@ -269,61 +275,94 @@ frobenius = true
     if frobenius
         eval_Euclidean_frob_grad!(Wvec, alpha, Vvec, Vvec_Ham, Vtg, Gvec, Galpha)
         Svec[:] = Gvec[:]
+        Salpha[:] = Galpha[:]
     else
         eval_Euclidean_trace_grad!(Wvec, alpha, Vvec, Vvec_Ham, Vtg, Gvec, Galpha)
         # skew-Hermitian matrices from the Euclidian gradient
         for q=1:Nterms
             Svec[q] = skew(Gvec[q]*Wvec[q]')
         end
+        Salpha[:] = Galpha[:]
     end
 
     # ## Finite difference test
-    # # FD with respect to initial states
-    # EPS = 1e-5
-    # for i=345:355
-    #     Random.seed!()
-    #     for q=1:Nterms
-    #         Hvec[q] = rand(ComplexF64, d,d)
-    #     end
-    #     obj0 = frob_obj_line(-EPS, Wvec, alpha, Vvec_Ham, Hvec, Vvec, Uvec, Vtg)
-    #     obj1 = frob_obj_line(EPS, Wvec, alpha, Vvec_Ham, Hvec, Vvec, Uvec, Vtg)
-    #     fd_obj = (obj1-obj0) /(2*EPS)
-    #     dir_obj = inner_prod(Gvec, Hvec)
-    #     # println("FD = ", fd_obj, " grad = ", dir_obj)
-    #     println("FD rel. error = ", abs(dir_obj - fd_obj)/abs(dir_obj))
-    # end
-    # # FD with respect to alpha
+    # Random directional derivatives
+    EPS = 1e-5
+    for i=345:355
+        Random.seed!(i)
+        for q=1:Nterms
+            # Hvec[q] =0.0* rand(ComplexF64, d,d)
+            Hvec[q] = rand(ComplexF64, d,d)
+        end
+        # Halpha = 0.0*rand(Float64, length(alpha))
+        Halpha = rand(Float64, length(alpha))
+        if frobenius
+            obj0 = frob_obj_line(-EPS, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+            obj1 = frob_obj_line(EPS, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+            GvecR = copy(Gvec)
+        else
+            for q=1:Nterms # Need swew symm part for Riemann gradient
+                Hvec[q] = skew(Hvec[q]*Wvec[q]')
+            end
+            obj0 = trace_obj_line(-EPS, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+            obj1 = trace_obj_line(EPS, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+            # Riemann gradient ?
+            GvecR = copy(Gvec)
+            for q=1:Nterms
+                GvecR[q]=skew(GvecR[q]*Wvec[q]') # Missing a Wvec after skew()?
+            end
+        end
+        fd_obj = (obj1-obj0) /(2*EPS)
+        # dir_obj = inner_prod(Gvec, Hvec) + Galpha'*Halpha
+        dir_obj = inner_prod(GvecR, Hvec) + Galpha'*Halpha
+        println("obj=", obj0," ", obj1, ", FD = ", fd_obj, " grad = ", dir_obj, " FD rel. error = ", abs(dir_obj - fd_obj)/abs(dir_obj))
+    end
+    stop
+    # # # Separately: Grad with respect to alpha
     # alphaP = copy(alpha)
-    # for i=1:length(alpha)
-    #     alphaP[i] = alpha[i] - EPS
-    #     obj0 = eval_frob_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
-    #     alphaP[i] = alpha[i] + EPS
-    #     obj1 = eval_frob_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
-    #     alphaP[i] = alpha[i] # Reset for next iteration
+    # # for i=1:length(alpha)
+    # #     alphaP[i] = alpha[i] - EPS
+    # #     if frobenius
+    # #         obj0 = eval_frob_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
+    # #     else
+    # #         obj0 = eval_trace_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
+    # #     end
+    # #     alphaP[i] = alpha[i] + EPS
+    # #     if frobenius
+    # #         obj1 = eval_frob_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
+    # #     else
+    # #         obj1 = eval_trace_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
+    # #     end
+    # #     alphaP[i] = alpha[i] # Reset for next iteration
 
-    #     fd_obj = (obj1-obj0) /(2*EPS)
-    #     dir_obj = Galpha[i]
-    #     # println("FD = ", fd_obj, " grad = ", dir_obj)
-    #     println("FD rel. error = ", abs(dir_obj - fd_obj)/abs(dir_obj))
-    # end
-    # stop
+    # #     fd_obj = (obj1-obj0) /(2*EPS)
+    # #     dir_obj = Galpha[i]
+    # #     # println("FD = ", fd_obj, " grad = ", dir_obj)
+    # #     println("FD rel. error = ", abs(dir_obj - fd_obj)/abs(dir_obj))
+    # # end
+    # # stop
 
     # The initial search direction equals S
     global γ = 0.0
+    global gg = 0.0
     Hvec[:] = Svec[:]
+    Halpha[:] = Salpha[:]
 
     # Initial objective function value
     # Define line search objective function with fixed direction
     if frobenius
-        t0_init = frob_obj_line(0.0, Wvec, alpha, Vvec_Ham, Hvec, Vvec, Uvec, Vtg)
-        ofunc3_f(t) = frob_obj_line(-t, Wvec, alpha, Vvec_Ham, Hvec, Vvec, Uvec, Vtg) 
+        to_init = frob_obj_line(0.0, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+        ofunc3_f(t) = frob_obj_line(-t, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg) 
     else
-        to_init = trace_obj_line(0.0, Wvec, alpha, Vvec_Ham, Hvec, Vvec, Uvec, Vtg)
-        ofunc3(t) =  trace_obj_line(-t, Wvec, alpha, Vvec_Ham, Hvec, Vvec, Uvec, Vtg) 
+        to_init = trace_obj_line(0.0, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+        ofunc3(t) =  trace_obj_line(-t, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg) 
     end
     println("initial guess, objective (G) = ", to_init, " t=0.0")
 
-    max_iter = 500
+
+    plo = plot(leg=:outerright, size=(800,400), xaxis = "t", yaxis = "objective", ylims=(0,3.0))
+
+    max_iter = 400
     global obj_hist = zeros(max_iter)
     global Gkk_hist = zeros(max_iter+1)
     global residuals = zeros(Nterms, max_iter)
@@ -334,10 +373,11 @@ frobenius = true
 
         Niter = iter
         Gkk = inner_prod(Svec, Svec)
+        Gkk_alpha = Salpha'*Salpha
         Gkk_hist[iter+1] = Gkk
 
-        if Gkk < 1e-9
-            println("Found local minima after ", Niter, " CG iterations, Gkk = ", Gkk)
+        if Gkk+Gkk_alpha < 1e-9
+            println("Found local minima after ", Niter, " CG iterations, Gkk = ", Gkk, "Gkk_alpha=", Gkk_alpha)
             break
         end
 
@@ -352,7 +392,17 @@ frobenius = true
         o_min = Optim.minimum(result)
         obj_hist[iter+1] = abs(o_min)
 
-        println("iter = ", iter, " Gkk = ", Gkk, " γ = ", γ, ", minimum (G) = ", o_min, " minimizer (t): ", t_min)
+        println("iter = ", iter, " Gkk = ", Gkk+Gkk_alpha, " γ = ", γ+gg, ", minimum (G) = ", o_min, " minimizer (t): ", t_min)
+
+        tls = LinRange(0.0, tmax1, 101)
+        # op2 = ofunc3_f.(tls) # Follow the unitary retraction (for plotting)
+        op2 = ofunc3.(tls) # Follow the unitary retraction (for plotting)
+        if iter <20
+            lstr = "frob-"*string(iter)
+            plot!(plo, tls, op2, lab=lstr, lw=3)
+            scatter!(plo, [t_min], [o_min], lab=:false)
+        end
+
 
         # next W:
         if frobenius
@@ -362,35 +412,53 @@ frobenius = true
         end
         Wvec[:] = Uvec[:]
 
+        # Next alpha
+        alpha[:] -= t_min*Halpha[:]
+        eval_propagators!(alpha, Vvec_Ham, Vvec)
+
         # Store residuals per window and eval new gradient
         if frobenius
             residuals[:, iter+1]  = eval_frob_per_window(Wvec, Vvec)
-            eval_Euclidean_frob_grad!(Wvec, Vvec, Vtg, Gvec)
+            eval_Euclidean_frob_grad!(Wvec, alpha, Vvec, Vvec_Ham, Vtg, Gvec, Galpha)
             Nvec[:] = Gvec[:]
         else
             residuals[:, iter+1]  = eval_trace_per_window(Wvec, Vvec)
-            eval_Euclidean_grad!(Wvec, Vvec, Vtg, Gvec)
+            eval_Euclidean_trace_grad!(Wvec, alpha, Vvec, Vvec_Ham, Vtg, Gvec, Galpha)
 
             # form the skew-Hermitian matrices from the Euclidian gradients
             for q=1:Nterms
                 Nvec[q] = skew(Gvec[q]*Wvec[q]')
             end
         end
-
-        Uvec[:] = Nvec[:] - Svec[:]
-        γ = inner_prod(Uvec, Nvec)/Gkk
+        Nalpha[:] = Galpha[:]
 
         # next search direction
-        Hvec[:] = Nvec[:] + γ .* Hvec[:]
+        Uvec[:] = Nvec[:] - Svec[:]
+        Ualpha[:] = Nalpha[:]-Salpha[:]
+        γ = inner_prod(Uvec, Nvec)/Gkk
+        g =  Ualpha'*Nalpha[:] / Gkk_alpha
+        gg = (inner_prod(Uvec, Nvec) + Ualpha'*Nalpha[:]) / (Gkk + Gkk_alpha)
+        Hvec[:] = Nvec[:] + gg .* Hvec[:]
+        Halpha[:] = Nalpha[:] + gg .*Halpha[:]
+        # Hvec[:] = Nvec[:] + γ .* Hvec[:]
+        # Halpha[:] = Nalpha[:] + g *Halpha[:]
 
-        HGprod = inner_prod(Hvec, Nvec)
+        HGprod =inner_prod(Hvec, Nvec) + Halpha'*Nalpha
         if HGprod < 0.0
+        # if true
             println("HGprod = ", HGprod, " < 0, taking a steepest descent direction")
             Hvec[:] = Nvec[:]
+            Halpha[:] = Nalpha[:]
         end
+        # HGprodg =  Halpha'*Nalpha
+        # if HGprodg < 0.0
+        #     println("HGprodg = ", HGprodg, " < 0, taking a steepest descent direction")
+        #     Halpha[:] = Nalpha[:]
+        # end
 
         # save new descent direction
         Svec[:] = Nvec[:]
+        Salpha[:] = Nalpha[:]
     end
 
     unitary_err = 0.0
@@ -400,8 +468,8 @@ frobenius = true
     end
     unitary_err /= Nterms
 
-    return obj_hist[1:Niter], Gkk_hist[1:Niter+1], residuals[:,1:Niter], unitary_err # Gkk_hist has Niter+1 elements
-# end # of function runCG
+    return obj_hist[1:Niter], Gkk_hist[1:Niter+1], residuals[:,1:Niter], unitary_err, plo # Gkk_hist has Niter+1 elements
+end # of function runCG
 
 
 ##########
@@ -410,7 +478,8 @@ frobenius = true
 
 # Number of windows in the objective
 # Nterms_all = [2,3,4,5,6]
-Nterms_all = [2, 4, 8, 16, 32]
+# Nterms_all = [2, 4, 8, 16, 32]
+Nterms_all = [2, 4, 8, 16]
 # Nterms_all = [4]
 
 # Maximum linesearch stepsize
@@ -420,20 +489,23 @@ tmax1_all = Nterms_all .+1
 # tmax1_all = 2.5*ones(length(Nterms_all))
 
 # Switch between trace riemann CG (false) and frobenius (true)
-frob = true
+frob = false
 
 # Run CG for each number of windows
 objhist = []
 gkkhist = []
 resids = []
 unitary_err = []
+plos = []
 for i=1:length(Nterms_all)
-    obj, gkk, res, uerr = runCG(Nterms_all[i], tmax1_all[i], frob)
+    obj, gkk, res, uerr, plo = runCG(Nterms_all[i], tmax1_all[i], frob)
     push!(objhist, obj)
     push!(gkkhist, gkk)
     push!(resids, res)
     push!(unitary_err, uerr)
+    push!(plos, plo)
 end
+println("Line search plot object stored in variable 'plos'")
 
 # title string for the plots
 if frob
