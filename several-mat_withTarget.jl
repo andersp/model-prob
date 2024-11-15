@@ -22,18 +22,17 @@ function init_random_unitary_mat!(d::Int64, Vvec::Vector{Matrix{ComplexF64}})
     return Vtg
 end
 
-function init_intermediate_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, frobenius)
+function init_intermediate_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, frobenius::Bool, amp::Float64=0.1)
     nlen = length(Wvec)
    
     S = Matrix(I, d,d)
-    amp = 1e-1
 
-    if frobenius
-        for q=1:nlen
-            S = Vvec[q]*S
-            Wvec[q] = S + rand(ComplexF64,d,d) * amp
-        end
-    else
+    # if frobenius
+    #     for q=1:nlen
+    #         S = Vvec[q]*S
+    #         Wvec[q] = S + rand(ComplexF64,d,d) * amp
+    #     end
+    # else
         for q=1:nlen
             # Exact propagator
             S = Vvec[q]*S
@@ -44,7 +43,7 @@ function init_intermediate_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}}, Vvec
             H += 0.5*(Hperturb + Hperturb')
             Wvec[q] = exp(-im*H)
         end
-    end
+    # end
 end
 
 function eval_trace_per_window(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}})
@@ -187,7 +186,7 @@ d = 2^q # dimension of matrices (d x d)
 Id = Matrix(I,d,d)
 
 # Optimize with CG for given number of windows (Nterms) and maximum linesearch 'tmax'
-function runCG(Nterms, tmax1, frobenius=true)
+function runCG(Nterms::Int64, tmax1::Float64, frobenius::Bool=true, amp::Float64=0.1)
     # set the seed in the random number generator
     Random.seed!(1234)
 
@@ -204,7 +203,7 @@ function runCG(Nterms, tmax1, frobenius=true)
     println("Final target dim: ", size(Vtg,1), " norm^2: ", norm(Vtg)^2)
 
     # Initial guess for intermediate states W: Small random perturbation from exact propagator
-    init_intermediate_mat!(d, Wvec, Vvec, frobenius)
+    init_intermediate_mat!(d, Wvec, Vvec, frobenius, amp)
 
     G0 = eval_trace_obj(Wvec, Vvec, Vtg)
     println("Initial objective: ", G0)
@@ -264,7 +263,7 @@ function runCG(Nterms, tmax1, frobenius=true)
         Gkk = inner_prod(Svec, Svec)
         Gkk_hist[iter+1] = Gkk
 
-        if Gkk < 1e-9
+        if Gkk < 1e-10
             println("Found local minima after ", Niter, " CG iterations, Gkk = ", Gkk)
             break
         end
@@ -343,12 +342,15 @@ Nterms_all = [2, 4, 8, 16, 32]
 
 # Maximum linesearch stepsize
 # TUNING! Too large or too small will slow convergence or end in local minimum...
-tmax1_all = Nterms_all .+1    
+tmax1_all = Nterms_all .+ 1.0    
 # tmax1_all = Nterms_all    
-# tmax1_all = 2.5*ones(length(Nterms_all))
+# tmax1_all = 2.5
 
 # Switch between trace riemann CG (false) and frobenius (true)
 frob = true
+
+# Amplitude for perturbing the initial guess from the exact solution
+init_amp = 0.1
 
 # Run CG for each number of windows
 objhist = []
@@ -356,7 +358,7 @@ gkkhist = []
 resids = []
 unitary_err = []
 for i=1:length(Nterms_all)
-    obj, gkk, res, uerr = runCG(Nterms_all[i], tmax1_all[i], frob)
+    obj, gkk, res, uerr = runCG(Nterms_all[i], tmax1_all[i], frob, init_amp)
     push!(objhist, obj)
     push!(gkkhist, gkk)
     push!(resids, res)
@@ -365,24 +367,24 @@ end
 
 # title string for the plots
 if frob
-    tstr = "Frobenius norm & Euclidean grads"
+    tstr = @sprintf("Frobenius norm & Euclidean grads, init_amp: %5.2f", init_amp)
 else
-    tstr = "Trace infidelity & Riemannian grads"
+    tstr = @sprintf("Trace infidelity & Riemannian grads, init_amp: %5.2f", init_amp)
 end
 
 # Plot convergence for each number of windows
 i=1
-pl_objhist = plot(objhist[i], yaxis=:log10, ylims=(1e-10,1e1), xlabel="Iteration", ylabel="Objective", label="Nterms="*string(Nterms_all[i]), title=tstr)
+pl_objhist = plot(objhist[i], yaxis=:log10, ylims=(1e-11,1e1), xlabel="Iteration", ylabel="Objective", label="Nwin="*string(Nterms_all[i]+1), title=tstr)
 for i=2:length(objhist)
-    global pl_objhist = plot!(objhist[i], yaxis=:log10, ylims=(1e-10,1e1), xlabel="Iteration", ylabel="Objective", label="Nterms="*string(Nterms_all[i]))
+    global pl_objhist = plot!(objhist[i], label="Nwin="*string(Nterms_all[i]+1))
 end
 println("\n All convergence histories plotted in 'pl_objhist'.")
 
 # Plot convergence for each number of windows (Gkk)
 i=1
-pl_gkkhist = plot(gkkhist[i], yaxis=:log10, ylims=(1e-10,1e1),  xlabel="Iteration", ylabel="Gkk", label="Nterms="*string(Nterms_all[i]), title=tstr)
+pl_gkkhist = plot(gkkhist[i], yaxis=:log10, ylims=(1e-11,1e1),  xlabel="Iteration", ylabel="Gkk", label="Nwin="*string(Nterms_all[i]+1), title=tstr)
 for i=2:length(gkkhist)
-    global pl_gkkhist = plot!(gkkhist[i], yaxis=:log10, ylims=(1e-10,1e1),  xlabel="Iteration", ylabel="Gkk", label="Nterms="*string(Nterms_all[i]))
+    global pl_gkkhist = plot!(gkkhist[i], label="Nwin="*string(Nterms_all[i]+1))
 end
 println("\n All gradient histories plotted in 'pl_gkkhist'.")
 
@@ -390,4 +392,4 @@ println("\n All gradient histories plotted in 'pl_gkkhist'.")
 # For the largest number of Nterms, plot the residuals per window, for the first few iterations iteration
 plotniters = min(Niter, 50)
 pl_residual = plot(resids[end][:,1:5:plotniters], yscale=:log10, legend=true, xlabel="window", ylabel="residual", title=tstr)
-println("\n Residuals per window for Nterms=", Nterms_all[end], " plotted in 'pl_residual'.")
+println("\n Residuals per window for Nwin=", Nterms_all[end]+1, " plotted in 'pl_residual'.")
