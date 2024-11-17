@@ -30,6 +30,30 @@ function init_identity_unitary_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}})
     end
 end
 
+function init_intermediate_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, amp::Float64=0.1)
+    nlen = length(Wvec)
+   
+    S = Matrix(I, d,d)
+
+    # if frobenius
+    #     for q=1:nlen
+    #         S = Vvec[q]*S
+    #         Wvec[q] = S + rand(ComplexF64,d,d) * amp
+    #     end
+    # else
+        for q=1:nlen
+            # Exact propagator
+            S = Vvec[q]*S
+
+            # Perturbed initial condition
+            H = im * log(S)
+            Hperturb = rand(ComplexF64,d,d) * amp
+            H += 0.5*(Hperturb + Hperturb')
+            Wvec[q] = exp(-im*H)
+        end
+    # end
+end
+
 function eval_trace_obj(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64})
     # evaluate a sum of trace infidelities
     Nterms = length(Zvec)
@@ -91,14 +115,15 @@ function inner_prod(Avec::Vector{Matrix{ComplexF64}}, Bvec::Vector{Matrix{Comple
     return real(sum)
 end
 
-q = 2 # two qubits
+q = 4 # 3 #2 # two qubits
 d = 2^q # dimension of matrices (d x d)
 Id = Matrix(I,d,d)
 
 # set the seed in the random number generator
-Random.seed!(1234)
+Random.seed!(12345)
 
-Nterms = 6 # Number of interior initial conditions in the objective
+init_amp = 0.1 # Amplitude of perturbation for initial guess
+Nterms = 32 # Number of interior initial conditions in the objective
 Nwin = Nterms+1
 
 Vvec = Vector{Matrix{ComplexF64}}(undef,Nwin) # Propagators in each window: Nterms + 1 elements
@@ -113,8 +138,9 @@ Uvec = Vector{Matrix{ComplexF64}}(undef,Nterms) # workspace
 Vtg = init_random_unitary_mat(d, Vvec)
 println("Final target dim: ", size(Vtg,1), " norm^2: ", norm(Vtg)^2)
 
-# Initial guess: identity matrices
-init_identity_unitary_mat!(d, Wvec)
+# Initial guess for intermediate initial conditions
+# init_identity_unitary_mat!(d, Wvec)
+init_intermediate_mat!(d, Wvec, Vvec, init_amp)
 
 G0 = eval_trace_obj(Wvec, Vvec, Vtg)
 println("Initial objective: ", G0)
@@ -177,18 +203,19 @@ str_3 = @sprintf("t₃")
 tmax1 = Nterms # 4.0 # 2.5 # max range for line search
 tls = LinRange(0.0, tmax1, 101)
 
-tstr= @sprintf("Opt iterations, t₁_s = %5.2f, t₂_s = %5.2f, t₃_s = %5.2f", t₁_fact, t₂_fact, t₃_fact)
+tstr= @sprintf("Objective along line seach direction")
 plo = plot(title=tstr, leg=:outerright, size=(800,400), xaxis = "t", yaxis = "G(U₁(-t),U₂(-t))", ylims=(0,4.0))
 
-ofunc3(t) =  trace_obj_line(-t, Wvec, Hvec, Vvec, Uvec) # objective function, fixed direction
+ofunc3(t) =  trace_obj_line(-t, Wvec, Hvec, Vvec, Uvec, Vtg) # objective function, fixed direction
 
 tstr = "Trace objective, unitary retraction"
 
-to_init = trace_obj_line(0.0, Wvec, Hvec, Vvec, Uvec)
+to_init = trace_obj_line(0.0, Wvec, Hvec, Vvec, Uvec, Vtg)
 println("initial guess, objective (G) = ", to_init, " t=0.0")
 
 max_iter = 100
 obj_hist = zeros(max_iter)
+gkk_hist = zeros(max_iter+1)
 Niter = 0
 # steepest descent with line-search
 for iter = 0:max_iter-1
@@ -196,8 +223,9 @@ for iter = 0:max_iter-1
 
     Niter = iter
     Gkk = inner_prod(Svec, Svec)
+    gkk_hist[iter+1] = Gkk # save for plotting
 
-    if Gkk < 1e-9
+    if Gkk < 1e-10
         println("Found local minima after ", Niter, " CG iterations, Gkk = ", Gkk)
         break
     end
@@ -214,7 +242,7 @@ for iter = 0:max_iter-1
     println("iter = ", iter, " Gkk = ", Gkk, " γ = ", γ, ", minimum (G) = ", o_min, " minimizer (t): ", t_min)
 
     if iter <10
-        lstr = "uni-"*string(iter)
+        lstr = "iter-"*string(iter)
         plot!(plo, tls, op2, lab=lstr, lw=3)
         scatter!(plo, [t_min], [o_min], lab=:false)
     end
@@ -246,9 +274,13 @@ for iter = 0:max_iter-1
 end
 println("Line search plot object stored in variable 'plo'")
 
-tstr = @sprintf("CG conv hist")
-plconv = plot(obj_hist[1:Niter], lab=string(Nterms)*"-terms", title=tstr, yaxis=:log10,ylims=(1e-10,1e1), xlabel="Iteration", ylabel="Objective")
+tstr = @sprintf("CG, Riemannian grad, dim = %d, init_amp = %5.2f", d, init_amp)
+
+plconv = plot(obj_hist[1:Niter], lab=string(Nterms+1)*"-win", title=tstr, yaxis=:log10,ylims=(1e-11,1e1), xlabel="Iteration", ylabel="Objective")
 println("Convergence plot in variable 'plconv'")
+
+plgkk = plot(gkk_hist[1:Niter+1], lab=string(Nterms)*"-win", title=tstr, yaxis=:log10,ylims=(1e-11,1e1), xlabel="Iteration", ylabel="norm2(grad)")
+println("Gradient convergence plot in variable 'plgkk'")
 
 # plot landscape near the local optima
 

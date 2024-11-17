@@ -181,12 +181,12 @@ function inner_prod(Avec::Vector{Matrix{ComplexF64}}, Bvec::Vector{Matrix{Comple
     return real(sum)
 end
 
-q = 2 # two qubits
-d = 2^q # dimension of matrices (d x d)
-Id = Matrix(I,d,d)
-
 # Optimize with CG for given number of windows (Nterms) and maximum linesearch 'tmax'
-function runCG(Nterms::Int64, tmax1::Float64, frobenius::Bool=true, amp::Float64=0.1)
+function runCG(Nqubit::Int64, Nterms::Int64, tmax1::Float64, frobenius::Bool=true, amp::Float64=0.1)
+
+    d = 2^Nqubit # dimension of matrices (d x d)
+    Id = Matrix(I,d,d)
+
     # set the seed in the random number generator
     Random.seed!(1234)
 
@@ -335,10 +335,15 @@ end # of function runCG
 # Run CG on increasing numbers of windows
 ##########
 
-# Number of windows in the objective
+# varying the number of qubits
+Nqubit_all = [2, 3, 4] # Dimension of unitary, dim = 2^q, where q is the number of qubits 
+Nterms_all = [32, 32, 32] # Number of windows in the objective
+
+# varying the number of windows
+# Nqubit_all = [2, 2, 2, 2, 2] # Dimension of unitary, dim = 2^q, where q is the number of qubits 
+# Nterms_all = [2, 4, 8, 16, 32] # Number of windows (-1) in the objective
+
 # Nterms_all = [2,3,4,5,6]
-Nterms_all = [2, 4, 8, 16, 32]
-# Nterms_all = [4]
 
 # Maximum linesearch stepsize
 # TUNING! Too large or too small will slow convergence or end in local minimum...
@@ -347,10 +352,10 @@ tmax1_all = Nterms_all .+ 1.0
 # tmax1_all = 2.5
 
 # Switch between trace riemann CG (false) and frobenius (true)
-frob = true
+frob = false # true # false # true
 
 # Amplitude for perturbing the initial guess from the exact solution
-init_amp = 0.1
+init_amp = 1e-2 # 1e-1 # 
 
 # Run CG for each number of windows
 objhist = []
@@ -358,7 +363,7 @@ gkkhist = []
 resids = []
 unitary_err = []
 for i=1:length(Nterms_all)
-    obj, gkk, res, uerr = runCG(Nterms_all[i], tmax1_all[i], frob, init_amp)
+    obj, gkk, res, uerr = runCG(Nqubit_all[i], Nterms_all[i], tmax1_all[i], frob, init_amp)
     push!(objhist, obj)
     push!(gkkhist, gkk)
     push!(resids, res)
@@ -373,23 +378,32 @@ else
 end
 
 # Plot convergence for each number of windows
-i=1
-pl_objhist = plot(objhist[i], yaxis=:log10, ylims=(1e-11,1e1), xlabel="Iteration", ylabel="Objective", label="Nwin="*string(Nterms_all[i]+1), title=tstr)
-for i=2:length(objhist)
-    global pl_objhist = plot!(objhist[i], label="Nwin="*string(Nterms_all[i]+1))
+pl_objhist = plot(yaxis=:log10, ylims=(1e-11,1e1), xlabel="Iteration", ylabel="Objective", title=tstr)
+for i=1:length(objhist)
+    lab_str = "Nq="*string(Nqubit_all[i])*" Nwin="*string(Nterms_all[i]+1)
+    global pl_objhist = plot!(objhist[i], label=lab_str)
 end
 println("\n All convergence histories plotted in 'pl_objhist'.")
 
 # Plot convergence for each number of windows (Gkk)
-i=1
-pl_gkkhist = plot(gkkhist[i], yaxis=:log10, ylims=(1e-11,1e1),  xlabel="Iteration", ylabel="Gkk", label="Nwin="*string(Nterms_all[i]+1), title=tstr)
-for i=2:length(gkkhist)
-    global pl_gkkhist = plot!(gkkhist[i], label="Nwin="*string(Nterms_all[i]+1))
+pl_gkkhist = plot(yaxis=:log10, ylims=(1e-11,1e1),  xlabel="Iteration", ylabel="Norm^2(grad)", title=tstr)
+for i=1:length(gkkhist)
+    lab_str = "Nq="*string(Nqubit_all[i])*" Nwin="*string(Nterms_all[i]+1)
+    global pl_gkkhist = plot!(gkkhist[i], label=lab_str)
 end
 println("\n All gradient histories plotted in 'pl_gkkhist'.")
 
 
 # For the largest number of Nterms, plot the residuals per window, for the first few iterations iteration
-plotniters = min(Niter, 50)
-pl_residual = plot(resids[end][:,1:5:plotniters], yscale=:log10, legend=true, xlabel="window", ylabel="residual", title=tstr)
+if frob
+    tstr = @sprintf("Window mismatch, Frobenius, Nq=%d, Nwin=%d, init_amp: %5.2f", Nqubit_all[end], Nterms_all[end], init_amp)
+else
+    tstr = @sprintf("Window mismatch, Infidelity, Nq=%d, Nwin=%d, init_amp: %5.2f", Nqubit_all[end], Nterms_all[end], init_amp)
+end
+plotniters = size(resids[end],2)
+pl_residual = plot(yscale=:log10, ylims=(1e-11,1e1), xlabel="window", ylabel="residual", title=tstr, leg=:outerright, size=(800,400))
+for i=1:5:plotniters
+    lab_str = "iter="*string(i)
+    plot!(pl_residual, resids[end][:,i], lab=lab_str)
+end
 println("\n Residuals per window for Nwin=", Nterms_all[end]+1, " plotted in 'pl_residual'.")
