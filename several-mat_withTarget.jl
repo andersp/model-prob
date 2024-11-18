@@ -261,7 +261,7 @@ function runCG(Nterms, tmax1, frobenius=true)
 
     # Initial guess for the control parameters
     amp = 0.1
-    alpha[:] = alpha_opt + amp*rand(Nterms+1)
+    alpha[:] = alpha_opt[:] + amp*rand(Nterms+1)
     # alpha[:] = rand(Nterms+1)
 
     if frobenius
@@ -309,7 +309,7 @@ function runCG(Nterms, tmax1, frobenius=true)
             # Riemann gradient ?
             GvecR = copy(Gvec)
             for q=1:Nterms
-                GvecR[q]=skew(GvecR[q]*Wvec[q]') # Missing a Wvec after skew()?
+                GvecR[q]=skew(GvecR[q]*Wvec[q]') # Is this missing a Wvec after skew()?
             end
         end
         fd_obj = (obj1-obj0) /(2*EPS)
@@ -317,7 +317,7 @@ function runCG(Nterms, tmax1, frobenius=true)
         dir_obj = inner_prod(GvecR, Hvec) + Galpha'*Halpha
         println("obj=", obj0," ", obj1, ", FD = ", fd_obj, " grad = ", dir_obj, " FD rel. error = ", abs(dir_obj - fd_obj)/abs(dir_obj))
     end
-    stop
+    # stop
     # # # Separately: Grad with respect to alpha
     # alphaP = copy(alpha)
     # # for i=1:length(alpha)
@@ -395,8 +395,11 @@ function runCG(Nterms, tmax1, frobenius=true)
         println("iter = ", iter, " Gkk = ", Gkk+Gkk_alpha, " γ = ", γ+gg, ", minimum (G) = ", o_min, " minimizer (t): ", t_min)
 
         tls = LinRange(0.0, tmax1, 101)
-        # op2 = ofunc3_f.(tls) # Follow the unitary retraction (for plotting)
-        op2 = ofunc3.(tls) # Follow the unitary retraction (for plotting)
+        if frobenius
+            op2 = ofunc3_f.(tls) # Follow the unitary retraction (for plotting)
+        else
+            op2 = ofunc3.(tls) # Follow the unitary retraction (for plotting)
+        end
         if iter <20
             lstr = "frob-"*string(iter)
             plot!(plo, tls, op2, lab=lstr, lw=3)
