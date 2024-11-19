@@ -6,32 +6,56 @@ using Optim
 
 skew(Z) = 0.5*(Z - Z') # skew-Hermitian part of Z
 
-function generate_solution!(d::Int64, Vvec::Vector{Matrix{ComplexF64}}, Vvec_Ham::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64})
-    nlen = length(Vvec)
+function generate_solution!(d::Int64, Vvec::Vector{Matrix{ComplexF64}}, H_mat::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64})
+    Nprop = length(Vvec) # Vvec holds the unitary propagators. One for each window
 
-    # Random optimal control 
-    alpha = rand(nlen+1)
+    # Random control vector to generate a final unitary target, Vtg
+    alpha[:] = 0.1*rand(Nprop) # One alpha coeff per window
+    # NOTE: In Julia, changing the elements in an array is called "mutation" and is done with a[i] = b[i], or a[:]=b
 
-    # Random propergator Hamiltonians per window
-    for q=1:nlen
-        Vvec_Ham[q] = rand(ComplexF64,d,d)
-        Vvec_Ham[q] = 0.5*(Vvec_Ham[q] + Vvec_Ham[q]')
+    # Random propagator Hamiltonians per window
+    for q=1:Nprop
+        H_rand = rand(ComplexF64,d,d)
+        H_mat[q] = 0.5*(H_rand + H_rand')
     end
 
-    # Evaluate solution operators per window
-    eval_propagators!(alpha, Vvec_Ham, Vvec)
+    # H_c = zeros(ComplexF64,d,d)
+    # for i=1:d-1
+    #     H_c[i, i+1] = 1.0
+    # end
+    # # Symmetrize
+    # H_c = 0.5*(H_c + H_c')
+
+    # # Fixed control Hamiltonian
+    # for q=1:Nprop
+    #     H_mat[q] = H_c
+    # end
+
+    # Evaluate propagation operators per window
+    eval_propagators!(alpha, H_mat, Vvec)
 
     # Final target
     Vtg = copy(Vvec[1])
-    for q=2:nlen
+    for q=2:Nprop
         Vtg = Vvec[q]*Vtg
     end
+
+    # Start from some other random control vector
+    # alpha[:] = rand(Nprop)
+
+    # Perturb the control vector
+    amp = 1e-2
+    alpha[:] += amp*rand(Nprop)
+
+    # Re-evaluate propagation operators with the updated control vector (alpha)
+    eval_propagators!(alpha, H_mat, Vvec)
+
     return Vtg
 end
 
-function eval_propagators!(alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}})
+function eval_propagators!(alpha::Vector{Float64}, H_mat::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}})
     for  q=1:length(Vvec)
-        Vvec[q] = exp(-im*alpha[q]*Vvec_Ham[q])
+        Vvec[q] = exp(-im*alpha[q]*H_mat[q])
     end
 end
 
@@ -39,7 +63,7 @@ function init_intermediate_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}}, Vvec
     nlen = length(Wvec)
    
     S = Matrix(I, d,d)
-    amp = 1e-1
+    amp = 1e-2 # 1e-1
 
     if frobenius
         for q=1:nlen
@@ -60,6 +84,15 @@ function init_intermediate_mat!(d::Int64, Wvec::Vector{Matrix{ComplexF64}}, Vvec
     end
 end
 
+function rollout_intermediate_mats!(Wvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}})
+    Ninter = length(Wvec)
+   
+    Wvec[1] = copy(Vvec[1])
+    for q=2:Ninter
+        Wvec[q] = Vvec[q]*Wvec[q-1]
+    end
+end
+
 function eval_trace_per_window(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Matrix{ComplexF64}})
     nlen = length(Zvec)
     d = size(Zvec[1],1)
@@ -73,13 +106,13 @@ function eval_trace_per_window(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Ma
 end
 
 
-function eval_trace_obj!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Vvec::Vector{Matrix{ComplexF64}})
+function eval_trace_obj!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, H_mat::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Vvec::Vector{Matrix{ComplexF64}})
     # evaluate a sum of trace infidelities
     nlen = length(Zvec)
     d = size(Zvec[1],1)
 
     # Evaluate current propagators 
-    eval_propagators!(alpha, Vvec_Ham, Vvec)
+    eval_propagators!(alpha, H_mat, Vvec)
     # Sum up intermediate window residuals 
     G = sum(eval_trace_per_window(Zvec, Vvec)) / nlen
     # Add final time target mismatch
@@ -100,13 +133,13 @@ function eval_frob_per_window(Zvec::Vector{Matrix{ComplexF64}}, Vvec::Vector{Mat
 end
 
 
-function eval_frob_obj!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Vvec::Vector{Matrix{ComplexF64}}, )
+function eval_frob_obj!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, H_mat::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Vvec::Vector{Matrix{ComplexF64}}, )
     # evaluate a sum of trace infidelities
     nlen = length(Zvec)
     d = size(Zvec[1],1)
 
     # Evaluate current propagators 
-    eval_propagators!(alpha, Vvec_Ham, Vvec)
+    eval_propagators!(alpha, H_mat, Vvec)
     # Sum up intermediate window residuals 
     G = sum(eval_frob_per_window(Zvec, Vvec)) / nlen
     # Add final time target mismatch
@@ -114,24 +147,24 @@ function eval_frob_obj!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}
     return G
 end
 
-function frob_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Halpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Ualpha::Vector{Float64}, Vtg::Matrix{ComplexF64})
+function frob_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, H_mat::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Halpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Ualpha::Vector{Float64}, Vtg::Matrix{ComplexF64})
     nTerms = length(Wvec) 
     for q=1:nTerms
         # Uvec[q] = exp(t * Hvec[q]) * Wvec[q] 
         Uvec[q] = Wvec[q] + t*Hvec[q]
     end
     Ualpha[:] = alpha[:] .+ t*Halpha[:]
-    return eval_frob_obj!(Uvec, Ualpha, Vvec_Ham, Vtg, Vvec)
+    return eval_frob_obj!(Uvec, Ualpha, H_mat, Vtg, Vvec)
 end
 
-function trace_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Halpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Ualpha::Vector{Float64}, Vtg::Matrix{ComplexF64})
+function trace_obj_line(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, H_mat::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Halpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}}, Ualpha::Vector{Float64}, Vtg::Matrix{ComplexF64})
     nTerms = length(Wvec) 
     for q=1:nTerms
         Uvec[q] = exp(t * Hvec[q]) * Wvec[q] 
         # Uvec[q] = Wvec[q] + t*Hvec[q] 
     end
     Ualpha[:] = alpha[:] .+ t*Halpha[:]
-    return eval_trace_obj!(Uvec, Ualpha, Vvec_Ham, Vtg, Vvec)
+    return eval_trace_obj!(Uvec, Ualpha, H_mat, Vtg, Vvec)
 end
 
 function unitary_retraction!(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, Hvec::Vector{Matrix{ComplexF64}}, Uvec::Vector{Matrix{ComplexF64}})
@@ -151,13 +184,13 @@ function euclidean_extrapolation!(t::Float64, Wvec::Vector{Matrix{ComplexF64}}, 
 end
 
 
-function eval_Euclidean_frob_grad!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Gvec::Vector{Matrix{ComplexF64}}, Galpha::Vector{Float64})
+function eval_Euclidean_frob_grad!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, H_mat::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Gvec::Vector{Matrix{ComplexF64}}, Galpha::Vector{Float64})
     # Gradient in-place in Gvec and Galpha
     Nterms = length(Zvec)
     d = size(Zvec[1],1)
 
     # Just to make sure Vvec is set for current alpha, re-evaluate them here.
-    eval_propagators!(alpha, Vvec_Ham, Vvec)
+    eval_propagators!(alpha, H_mat, Vvec)
 
     # Gradient wrt intermediate states
     Gvec[1] = 2*(Zvec[1] - Vvec[1]) / Nterms
@@ -169,26 +202,26 @@ function eval_Euclidean_frob_grad!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vect
     Gvec[:] = Gvec
 
     # Gradient with respect to alpha
-    Vprime = -im*Vvec_Ham[1]*Vvec[1]
+    Vprime = -im*H_mat[1]*Vvec[1]
     Galpha[1] = -2*real(tr((Zvec[1] - Vvec[1])'*Vprime)) / Nterms
     for q=2:Nterms
-        Vprime = -im*Vvec_Ham[q]*Vvec[q]
+        Vprime = -im*H_mat[q]*Vvec[q]
         Galpha[q] = -2*real(tr((Zvec[q] - Vvec[q]*Zvec[q-1])'*Vprime*Zvec[q-1])) / Nterms
     end
     q = Nterms+1
-    Vprime = -im*Vvec_Ham[q]*Vvec[q]
+    Vprime = -im*H_mat[q]*Vvec[q]
     Galpha[q] = -2*real(tr(Zvec[q-1]'*Vvec[q]'*Vtg) * tr(Vtg'*Vprime*Zvec[q-1]))/d
 end
 
 
-function eval_Euclidean_trace_grad!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, Vvec_Ham::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Gvec::Vector{Matrix{ComplexF64}}, Galpha::Vector{Float64})
+function eval_Euclidean_trace_grad!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vector{Float64}, Vvec::Vector{Matrix{ComplexF64}}, H_mat::Vector{Matrix{ComplexF64}}, Vtg::Matrix{ComplexF64}, Gvec::Vector{Matrix{ComplexF64}}, Galpha::Vector{Float64})
 
     # in-place results in Gvec
     Nterms = length(Zvec)
     d = size(Zvec[1],1)
 
     # Just to make sure Vvec is set for current alpha, re-evaluate them here.
-    eval_propagators!(alpha, Vvec_Ham, Vvec)
+    eval_propagators!(alpha, H_mat, Vvec)
     
     # Gradient wrt intermediate states
     Gvec[1] = 2*(Zvec[1] - Vvec[1]*tr(Vvec[1]'*Zvec[1])/d) / Nterms
@@ -202,14 +235,14 @@ function eval_Euclidean_trace_grad!(Zvec::Vector{Matrix{ComplexF64}}, alpha::Vec
     Gvec[:] = Gvec
 
     # Gradient with respect to alpha
-    Vprime = -im*Vvec_Ham[1]*Vvec[1]
+    Vprime = -im*H_mat[1]*Vvec[1]
     Galpha[1] = -2*real(tr(Vvec[1]'*Zvec[1]) * tr(Zvec[1]'*Vprime))/d/Nterms
     for q=2:Nterms
-        Vprime = -im*Vvec_Ham[q]*Vvec[q]
+        Vprime = -im*H_mat[q]*Vvec[q]
         Galpha[q] = -2*real(tr(Zvec[q-1]'*Vvec[q]'*Zvec[q]) * tr(Zvec[q]'*Vprime*Zvec[q-1]))/d/Nterms
     end
     q = Nterms+1
-    Vprime = -im*Vvec_Ham[q]*Vvec[q]
+    Vprime = -im*H_mat[q]*Vvec[q]
     Galpha[q] = -2*real(tr(Zvec[q-1]'*Vvec[q]'*Vtg) * tr(Vtg'*Vprime*Zvec[q-1]))/d
 end
 
@@ -237,7 +270,7 @@ function runCG(Nterms, tmax1, frobenius=true)
     Random.seed!(1234)
 
     Vvec = Vector{Matrix{ComplexF64}}(undef,Nterms+1) # Propagators in each window: Nterms + 1 elements
-    Vvec_Ham = Vector{Matrix{ComplexF64}}(undef,Nterms+1) # Hamiltonian for each Propagator
+    H_mat = Vector{Matrix{ComplexF64}}(undef,Nterms+1) # Hamiltonian for each Propagator
     Wvec = Vector{Matrix{ComplexF64}}(undef,Nterms)   # unknown intermediate initial conditions,
     Gvec = Vector{Matrix{ComplexF64}}(undef,Nterms)   # Euclidean gradient
     Svec = Vector{Matrix{ComplexF64}}(undef,Nterms)   # Riemannian gradient (current point)
@@ -251,33 +284,37 @@ function runCG(Nterms, tmax1, frobenius=true)
     Halpha = zeros(Float64,Nterms+1)                # 
     Ualpha = zeros(Float64,Nterms+1)                # 
 
-    # General optimal controls, solution operators and final target
-    Vtg = generate_solution!(d, Vvec, Vvec_Ham, alpha)
+    # Generate control vector, propagation operators, and final target
+    Vtg = generate_solution!(d, Vvec, H_mat, alpha)
     alpha_opt = copy(alpha)
     println("Final target dim: ", size(Vtg,1), " norm^2: ", norm(Vtg)^2)
 
     # Initial guess for intermediate states W: Small random perturbation from exact propagator
-    init_intermediate_mat!(d, Wvec, Vvec, frobenius)
+    # init_intermediate_mat!(d, Wvec, Vvec, frobenius)
+
+    # Initial guess for intermediate initial conditions (Wvec) roll-out based on unitary propagators (Vvec) 
+    # corrresponding to the initial control vector (alpha)
+    rollout_intermediate_mats!(Wvec, Vvec)
 
     # Initial guess for the control parameters
-    amp = 0.1
-    alpha[:] = alpha_opt[:] + amp*rand(Nterms+1)
+    # amp = 0.1
+    # alpha[:] = alpha_opt[:] + amp*rand(Nterms+1)
     # alpha[:] = rand(Nterms+1)
 
     if frobenius
-        G0 = eval_frob_obj!(Wvec, alpha, Vvec_Ham, Vtg, Vvec)
+        G0 = eval_frob_obj!(Wvec, alpha, H_mat, Vtg, Vvec)
     else
-        G0 = eval_trace_obj!(Wvec, alpha, Vvec_Ham, Vtg, Vvec)
+        G0 = eval_trace_obj!(Wvec, alpha, H_mat, Vtg, Vvec)
     end
     println("Initial objective: ", G0)
 
     # Euclidean gradient
     if frobenius
-        eval_Euclidean_frob_grad!(Wvec, alpha, Vvec, Vvec_Ham, Vtg, Gvec, Galpha)
+        eval_Euclidean_frob_grad!(Wvec, alpha, Vvec, H_mat, Vtg, Gvec, Galpha)
         Svec[:] = Gvec[:]
         Salpha[:] = Galpha[:]
     else
-        eval_Euclidean_trace_grad!(Wvec, alpha, Vvec, Vvec_Ham, Vtg, Gvec, Galpha)
+        eval_Euclidean_trace_grad!(Wvec, alpha, Vvec, H_mat, Vtg, Gvec, Galpha)
         # skew-Hermitian matrices from the Euclidian gradient
         for q=1:Nterms
             Svec[q] = skew(Gvec[q]*Wvec[q]')
@@ -297,15 +334,15 @@ function runCG(Nterms, tmax1, frobenius=true)
         # Halpha = 0.0*rand(Float64, length(alpha))
         Halpha = rand(Float64, length(alpha))
         if frobenius
-            obj0 = frob_obj_line(-EPS, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
-            obj1 = frob_obj_line(EPS, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+            obj0 = frob_obj_line(-EPS, Wvec, alpha, H_mat, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+            obj1 = frob_obj_line(EPS, Wvec, alpha, H_mat, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
             GvecR = copy(Gvec)
         else
-            for q=1:Nterms # Need swew symm part for Riemann gradient
+            for q=1:Nterms # Need skew symm part for Riemann gradient
                 Hvec[q] = skew(Hvec[q]*Wvec[q]')
             end
-            obj0 = trace_obj_line(-EPS, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
-            obj1 = trace_obj_line(EPS, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+            obj0 = trace_obj_line(-EPS, Wvec, alpha, H_mat, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+            obj1 = trace_obj_line(EPS, Wvec, alpha, H_mat, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
             # Riemann gradient ?
             GvecR = copy(Gvec)
             for q=1:Nterms
@@ -323,15 +360,15 @@ function runCG(Nterms, tmax1, frobenius=true)
     # # for i=1:length(alpha)
     # #     alphaP[i] = alpha[i] - EPS
     # #     if frobenius
-    # #         obj0 = eval_frob_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
+    # #         obj0 = eval_frob_obj!(Wvec, alphaP, H_mat, Vtg, Vvec)
     # #     else
-    # #         obj0 = eval_trace_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
+    # #         obj0 = eval_trace_obj!(Wvec, alphaP, H_mat, Vtg, Vvec)
     # #     end
     # #     alphaP[i] = alpha[i] + EPS
     # #     if frobenius
-    # #         obj1 = eval_frob_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
+    # #         obj1 = eval_frob_obj!(Wvec, alphaP, H_mat, Vtg, Vvec)
     # #     else
-    # #         obj1 = eval_trace_obj!(Wvec, alphaP, Vvec_Ham, Vtg, Vvec)
+    # #         obj1 = eval_trace_obj!(Wvec, alphaP, H_mat, Vtg, Vvec)
     # #     end
     # #     alphaP[i] = alpha[i] # Reset for next iteration
 
@@ -351,11 +388,11 @@ function runCG(Nterms, tmax1, frobenius=true)
     # Initial objective function value
     # Define line search objective function with fixed direction
     if frobenius
-        to_init = frob_obj_line(0.0, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
-        ofunc3_f(t) = frob_obj_line(-t, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg) 
+        to_init = frob_obj_line(0.0, Wvec, alpha, H_mat, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+        ofunc3_f(t) = frob_obj_line(-t, Wvec, alpha, H_mat, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg) 
     else
-        to_init = trace_obj_line(0.0, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
-        ofunc3(t) =  trace_obj_line(-t, Wvec, alpha, Vvec_Ham, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg) 
+        to_init = trace_obj_line(0.0, Wvec, alpha, H_mat, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg)
+        ofunc3(t) =  trace_obj_line(-t, Wvec, alpha, H_mat, Hvec, Halpha, Vvec, Uvec, Ualpha, Vtg) 
     end
     println("initial guess, objective (G) = ", to_init, " t=0.0")
 
@@ -374,10 +411,10 @@ function runCG(Nterms, tmax1, frobenius=true)
         Niter = iter
         Gkk = inner_prod(Svec, Svec)
         Gkk_alpha = Salpha'*Salpha
-        Gkk_hist[iter+1] = Gkk
+        Gkk_hist[iter+1] = Gkk+Gkk_alpha
 
-        if Gkk+Gkk_alpha < 1e-9
-            println("Found local minima after ", Niter, " CG iterations, Gkk = ", Gkk, "Gkk_alpha=", Gkk_alpha)
+        if Gkk+Gkk_alpha < 1e-10 # 1e-9
+            println("\n Found local minima after ", Niter, " CG iterations, Gkk = ", Gkk, " Gkk_alpha=", Gkk_alpha)
             break
         end
 
@@ -417,16 +454,16 @@ function runCG(Nterms, tmax1, frobenius=true)
 
         # Next alpha
         alpha[:] -= t_min*Halpha[:]
-        eval_propagators!(alpha, Vvec_Ham, Vvec)
+        eval_propagators!(alpha, H_mat, Vvec)
 
         # Store residuals per window and eval new gradient
         if frobenius
             residuals[:, iter+1]  = eval_frob_per_window(Wvec, Vvec)
-            eval_Euclidean_frob_grad!(Wvec, alpha, Vvec, Vvec_Ham, Vtg, Gvec, Galpha)
+            eval_Euclidean_frob_grad!(Wvec, alpha, Vvec, H_mat, Vtg, Gvec, Galpha)
             Nvec[:] = Gvec[:]
         else
             residuals[:, iter+1]  = eval_trace_per_window(Wvec, Vvec)
-            eval_Euclidean_trace_grad!(Wvec, alpha, Vvec, Vvec_Ham, Vtg, Gvec, Galpha)
+            eval_Euclidean_trace_grad!(Wvec, alpha, Vvec, H_mat, Vtg, Gvec, Galpha)
 
             # form the skew-Hermitian matrices from the Euclidian gradients
             for q=1:Nterms
@@ -483,7 +520,7 @@ end # of function runCG
 # Nterms_all = [2,3,4,5,6]
 # Nterms_all = [2, 4, 8, 16, 32]
 Nterms_all = [2, 4, 8, 16]
-# Nterms_all = [4]
+# Nterms_all = [16]
 
 # Maximum linesearch stepsize
 # TUNING! Too large or too small will slow convergence or end in local minimum...
@@ -492,7 +529,7 @@ tmax1_all = Nterms_all .+1
 # tmax1_all = 2.5*ones(length(Nterms_all))
 
 # Switch between trace riemann CG (false) and frobenius (true)
-frob = false
+frob = false # true # false
 
 # Run CG for each number of windows
 objhist = []
@@ -508,7 +545,7 @@ for i=1:length(Nterms_all)
     push!(unitary_err, uerr)
     push!(plos, plo)
 end
-println("Line search plot object stored in variable 'plos'")
+println("\n Line search plot object stored in variable 'plos'")
 
 # title string for the plots
 if frob
@@ -518,23 +555,32 @@ else
 end
 
 # Plot convergence for each number of windows
-i=1
-pl_objhist = plot(objhist[i], yaxis=:log10, ylims=(1e-10,1e1), xlabel="Iteration", ylabel="Objective", label="Nterms="*string(Nterms_all[i]), title=tstr)
-for i=2:length(objhist)
-    global pl_objhist = plot!(objhist[i], yaxis=:log10, ylims=(1e-10,1e1), xlabel="Iteration", ylabel="Objective", label="Nterms="*string(Nterms_all[i]))
+pl_objhist = plot(yaxis=:log10, ylims=(1e-11,1e1), xlabel="Iteration", ylabel="Objective", title=tstr)
+for i=1:length(objhist)
+    lab_str = " Nwin="*string(Nterms_all[i]+1)
+    global pl_objhist = plot!(objhist[i], label=lab_str)
 end
 println("\n All convergence histories plotted in 'pl_objhist'.")
 
 # Plot convergence for each number of windows (Gkk)
-i=1
-pl_gkkhist = plot(gkkhist[i], yaxis=:log10, ylims=(1e-10,1e1),  xlabel="Iteration", ylabel="Gkk", label="Nterms="*string(Nterms_all[i]), title=tstr)
-for i=2:length(gkkhist)
-    global pl_gkkhist = plot!(gkkhist[i], yaxis=:log10, ylims=(1e-10,1e1),  xlabel="Iteration", ylabel="Gkk", label="Nterms="*string(Nterms_all[i]))
+pl_gkkhist = plot(yaxis=:log10, ylims=(1e-11,1e1),  xlabel="Iteration", ylabel="Norm^2(grad)", title=tstr)
+for i=1:length(gkkhist)
+    lab_str = " Nwin="*string(Nterms_all[i]+1)
+    global pl_gkkhist = plot!(gkkhist[i], label=lab_str)
 end
 println("\n All gradient histories plotted in 'pl_gkkhist'.")
 
 
 # For the largest number of Nterms, plot the residuals per window, for the first few iterations iteration
-plotniters = min(Niter, 50)
-pl_residual = plot(resids[end][:,1:5:plotniters], yscale=:log10, legend=true, xlabel="window", ylabel="residual", title=tstr)
-println("\n Residuals per window for Nterms=", Nterms_all[end], " plotted in 'pl_residual'.")
+if frob
+    tstr = @sprintf("Window mismatch, Frobenius, Nwin=%d", Nterms_all[end]+1)
+else
+    tstr = @sprintf("Window mismatch, Infidelity, Nwin=%d", Nterms_all[end]+1)
+end
+plotniters = size(resids[end],2)
+pl_residual = plot(yscale=:log10, ylims=(1e-11,1e1), xlabel="window", ylabel="residual", title=tstr, leg=:outerright, size=(800,400))
+for i=1:5:plotniters
+    lab_str = "iter="*string(i)
+    plot!(pl_residual, max.(resids[end][:,i], 1e-12), lab=lab_str)
+end
+println("\n Residuals per window for Nwin=", Nterms_all[end]+1, " plotted in 'pl_residual'.")
