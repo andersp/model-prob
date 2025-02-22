@@ -51,10 +51,10 @@ Nω = 2000
 
 tstr = @sprintf("f_r = %.3e, Rr_o_Lr = %.3e", f_r, Rr_o_Lr)
 pl0 = plot(title = tstr, xaxis="freq [GHz]")
-plot!(pl0, ω_grid*0.5/pi, real.(Cr_N_r.(im*ω_grid)), lab="Re{C_r*N_r(s)}")
-plot!(pl0, ω_grid*0.5/pi, imag.(Cr_N_r.(im*ω_grid)), lab="Im{C_r*N_r(s)}")
-plot!(pl0, ω_grid*0.5/pi, real.(D_r.(im*ω_grid)), lab="Re{D_r(s)}")
-plot!(pl0, ω_grid*0.5/pi, imag.(D_r.(im*ω_grid)), lab="Im{D_r(s)}")
+plot!(pl0, ω_grid*0.5/pi, real.(Cr_Nr.(im*ω_grid)), lab="Re{C_r*N_r(s)}")
+plot!(pl0, ω_grid*0.5/pi, imag.(Cr_Nr.(im*ω_grid)), lab="Im{C_r*N_r(s)}")
+plot!(pl0, ω_grid*0.5/pi, real.(Dr.(im*ω_grid)), lab="Re{D_r(s)}")
+plot!(pl0, ω_grid*0.5/pi, imag.(Dr.(im*ω_grid)), lab="Im{D_r(s)}")
 scatter!(pl0, [f_r], [0.0], markershape=:cross, label="Res(R=0)")
 scatter!(pl0, [f_r_corr], [0.0], markershape=:cross, label="Res(R>0)")
 
@@ -109,6 +109,7 @@ Ck_o_Cg = 0.01
 N_rt(s) = Ck_o_Cg * Cg_Ztr(s)
 D_rt(s) = 1/s + Ck_o_Cg * Cg_Ztr(s)
 T_itr(s) = N_rt(s)/D_rt(s) # (in to res)
+T_tri(s) = D_rt(s)/N_rt(s) # (res to in)
 
 # define grid in 's' near omega_r
 Nω = 2000
@@ -116,11 +117,11 @@ Nω = 2000
 ω_1 = 6.412 * 2*pi # (ω_r + 2*pi*0.5)
 ω_grid = LinRange(ω_0, ω_1, Nω) 
 
-tstr = @sprintf("Transfer func input to res, near res freq")
+tstr = @sprintf("Transfer func res to input, near res freq")
 pl5 = plot(title = tstr, xaxis="freq [GHz]", leg=:topright)
-plot!(pl5, ω_grid*0.5/pi, real.(T_itr.(im*ω_grid)), lab="Re(T_itr(ω))")
-plot!(pl5, ω_grid*0.5/pi, imag.(T_itr.(im*ω_grid)), lab="Im(T_itr(ω))")
-plot!(pl5, ω_grid*0.5/pi, abs.(T_itr.(im*ω_grid)), lab="Abs(T_itr(ω))")
+plot!(pl5, ω_grid*0.5/pi, real.(T_tri.(im*ω_grid)), lab="Re(T_tri(ω))")
+plot!(pl5, ω_grid*0.5/pi, imag.(T_tri.(im*ω_grid)), lab="Im(T_tri(ω))")
+plot!(pl5, ω_grid*0.5/pi, abs.(T_tri.(im*ω_grid)), lab="Abs(T_tri(ω))")
 
 # define grid in 's' near omega_t
 Nω = 2000
@@ -128,11 +129,11 @@ Nω = 2000
 ω_1 = 4.95 * 2*pi # (ω_r + 2*pi*0.5)
 ω_grid = LinRange(ω_0, ω_1, Nω) 
 
-tstr = @sprintf("Transfer func input to res, near transmon freq")
+tstr = @sprintf("Transfer func res to input, near transmon freq")
 pl6 = plot(title = tstr, xaxis="freq [GHz]", leg=:topright)
-plot!(pl6, ω_grid*0.5/pi, real.(T_itr.(im*ω_grid)), lab="Re(T_itr(ω))")
-plot!(pl6, ω_grid*0.5/pi, imag.(T_itr.(im*ω_grid)), lab="Im(T_itr(ω))")
-plot!(pl6, ω_grid*0.5/pi, abs.(T_itr.(im*ω_grid)), lab="Abs(T_itr(ω))")
+plot!(pl6, ω_grid*0.5/pi, real.(T_tri.(im*ω_grid)), lab="Re(T_tri(ω))")
+plot!(pl6, ω_grid*0.5/pi, imag.(T_tri.(im*ω_grid)), lab="Im(T_tri(ω))")
+plot!(pl6, ω_grid*0.5/pi, abs.(T_tri.(im*ω_grid)), lab="Abs(T_tri(ω))")
 
 #scatter!(pl6, [f_t_corr], [0.0], markershape=:cross, label="Trmon(cpld)")
 #scatter!(pl6, [f_r_corr], [0.0], markershape=:cross, label="Reson(cpld)")
