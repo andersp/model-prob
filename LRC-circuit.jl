@@ -84,12 +84,13 @@ Nω = 2000
 ω_1 = 6.43 * 2*pi # (ω_r + 2*pi*0.5)
 ω_grid = LinRange(ω_0, ω_1, Nω)
 
+rad2deg = 180/pi
 # Impedance
 tstr = @sprintf("Transmon+Resonator impedance near ω_r ")
 pl3 = plot(title = tstr, xlabel="freq [GHz]", leg=:topright)
 plot!(pl3, ω_grid*0.5/pi, real.(Cg_Ztr.(im*ω_grid)), lab="Re(C_g*Ztr(ω))")
 plot!(pl3, ω_grid*0.5/pi, imag.(Cg_Ztr.(im*ω_grid)), lab="Im(C_g*Ztr(ω))")
-plot!(pl3, ω_grid*0.5/pi, abs.(Cg_Ztr.(im*ω_grid)), lab="Abs(C_g*Ztr(ω))")
+#plot!(pl3, ω_grid*0.5/pi, rad2deg*angle.(Cg_Ztr.(im*ω_grid)), lab="phase(C_g*Ztr(ω))")
 
 # define grid in 's'
 Nω = 2000
@@ -102,7 +103,7 @@ tstr = @sprintf("Transmon+Resonator impedance near ω_t")
 pl4 = plot(title = tstr, xlabel="freq [GHz]", leg=:topright)
 plot!(pl4, ω_grid*0.5/pi, real.(Cg_Ztr.(im*ω_grid)), lab="Re(C_g*Ztr(ω))")
 plot!(pl4, ω_grid*0.5/pi, imag.(Cg_Ztr.(im*ω_grid)), lab="Im(C_g*Ztr(ω))")
-plot!(pl4, ω_grid*0.5/pi, abs.(Cg_Ztr.(im*ω_grid)), lab="Abs(C_g*Ztr(ω))")
+#plot!(pl4, ω_grid*0.5/pi, abs.(Cg_Ztr.(im*ω_grid)), lab="Abs(C_g*Ztr(ω))")
 
 # Transfer fcn V_tr = T_itr * V_in (input to resonator)
 Ck_o_Cg = 0.01
@@ -113,27 +114,35 @@ T_tri(s) = D_rt(s)/N_rt(s) # (res to in)
 
 # define grid in 's' near omega_r
 Nω = 2000
-ω_0 = 6.408 * 2*pi # (ω_t - 2*pi*2)
-ω_1 = 6.412 * 2*pi # (ω_r + 2*pi*0.5)
+ω_0 = 6.40 * 2*pi # (ω_t - 2*pi*2)
+ω_1 = 6.42 * 2*pi # (ω_r + 2*pi*0.5)
 ω_grid = LinRange(ω_0, ω_1, Nω) 
 
 tstr = @sprintf("Transfer func res to input, near res freq")
-pl5 = plot(title = tstr, xaxis="freq [GHz]", leg=:topright)
-plot!(pl5, ω_grid*0.5/pi, real.(T_tri.(im*ω_grid)), lab="Re(T_tri(ω))")
-plot!(pl5, ω_grid*0.5/pi, imag.(T_tri.(im*ω_grid)), lab="Im(T_tri(ω))")
-plot!(pl5, ω_grid*0.5/pi, abs.(T_tri.(im*ω_grid)), lab="Abs(T_tri(ω))")
+pl5 = plot(title = tstr, xlabel="freq [GHz]", ylabel="Phase [deg]", leg=:bottomright)
+#plot!(pl5, ω_grid*0.5/pi, real.(T_tri.(im*ω_grid)), lab="Re(T_tri(ω))")
+#plot!(pl5, ω_grid*0.5/pi, imag.(T_tri.(im*ω_grid)), lab="Im(T_tri(ω))")
+plot!(pl5, ω_grid*0.5/pi, rad2deg*angle.(T_tri.(im*ω_grid)), lab="phase(T_tri(ω))")
+
+tstr = @sprintf("Transfer func input to res, near res freq")
+pl5n = plot(title = tstr, xlabel="freq [GHz]", ylabel="Phase [deg]", leg=:bottomright)
+plot!(pl5n, ω_grid*0.5/pi, rad2deg*angle.(T_itr.(im*ω_grid)), lab="phase(T_itr(ω))")
 
 # define grid in 's' near omega_t
 Nω = 2000
-ω_0 = 4.93 * 2*pi # (ω_t - 2*pi*2)
-ω_1 = 4.95 * 2*pi # (ω_r + 2*pi*0.5)
+ω_0 = 4.8 * 2*pi # (ω_t - 2*pi*2)
+ω_1 = 5.1 * 2*pi # (ω_r + 2*pi*0.5)
 ω_grid = LinRange(ω_0, ω_1, Nω) 
 
 tstr = @sprintf("Transfer func res to input, near transmon freq")
-pl6 = plot(title = tstr, xaxis="freq [GHz]", leg=:topright)
-plot!(pl6, ω_grid*0.5/pi, real.(T_tri.(im*ω_grid)), lab="Re(T_tri(ω))")
-plot!(pl6, ω_grid*0.5/pi, imag.(T_tri.(im*ω_grid)), lab="Im(T_tri(ω))")
-plot!(pl6, ω_grid*0.5/pi, abs.(T_tri.(im*ω_grid)), lab="Abs(T_tri(ω))")
+pl6 = plot(title = tstr, xaxis="freq [GHz]", ylabel="Phase [deg]", leg=:bottomright)
+#plot!(pl6, ω_grid*0.5/pi, real.(T_tri.(im*ω_grid)), lab="Re(T_tri(ω))")
+#plot!(pl6, ω_grid*0.5/pi, imag.(T_tri.(im*ω_grid)), lab="Im(T_tri(ω))")
+plot!(pl6, ω_grid*0.5/pi, rad2deg*angle.(T_tri.(im*ω_grid)), lab="phase(T_tri(ω))")
+
+tstr = @sprintf("Transfer func input to res, near transmon freq")
+pl6n = plot(title = tstr, xaxis="freq [GHz]", ylabel="Phase [deg]", leg=:bottomright)
+plot!(pl6n, ω_grid*0.5/pi, rad2deg*angle.(T_itr.(im*ω_grid)), lab="phase(T_itr(ω))")
 
 #scatter!(pl6, [f_t_corr], [0.0], markershape=:cross, label="Trmon(cpld)")
 #scatter!(pl6, [f_r_corr], [0.0], markershape=:cross, label="Reson(cpld)")
